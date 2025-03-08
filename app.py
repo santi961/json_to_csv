@@ -7,9 +7,11 @@ from io import BytesIO
 from datetime import datetime
 
 def format_duration(milliseconds):
-    """Convert milliseconds to HH:MM:SS format, leave blank if zero."""
+    """Convert milliseconds to HH:MM:SS format, ensuring no '0 days' appears."""
     seconds = round(milliseconds / 1000)
-    return str(pd.to_timedelta(seconds, unit='s')) if seconds > 0 else ""
+    if seconds == 0:
+        return ""
+    return str(pd.to_timedelta(seconds, unit='s')).split()[-1]  # Extract only HH:MM:SS
 
 def process_json(json_data):
     """Process JSON data and generate CSV data."""
