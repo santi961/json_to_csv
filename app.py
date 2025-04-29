@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import streamlit as st
-import json, os, math, re, io
+import json, os, math, re, io, zipfile
 import pandas as pd
 import yaml
 from collections import defaultdict
@@ -70,8 +70,10 @@ def sort_period_key(p):
 # ---------- Data Processing ----------
 
 def process_data(data):
-    logos = {(l['FileName'], l['GroupId']): normalize_placement(l.get('Placement', ''))
-             for l in data.get('Logos', [])}
+    logos = {}
+    for l in data.get('Logos', []):
+        placement = normalize_placement(l.get('Placement', ''))
+        logos[(l['FileName'], l['GroupId'])] = placement
     stats, periods = {}, set()
     for shot in data.get('Shots', []):
         key = (shot['FileName'], shot['GroupId'])
@@ -97,7 +99,7 @@ def process_data(data):
             agg['periods'][per] = agg['periods'].get(per, 0.0) + ms
     return sponsor_stats, sorted(periods, key=sort_period_key)
 
-# ---------- Sheet Builders ----------
+# ---------- Builders ----------
 
 def build_individual_df(sponsor_stats, periods):
     rows = []
@@ -105,7 +107,6 @@ def build_individual_df(sponsor_stats, periods):
         cnt = agg['count']
         if cnt == 0:
             continue
-        # round shots up (though integer already)
         total_shots = math.ceil(cnt)
         row = {
             'Placement': placement,
@@ -128,7 +129,6 @@ def build_aggregate_df(individual_dfs, periods):
             return 0
         h, m, s = map(int, hms.split(':'))
         return (h*3600 + m*60 + s) * 1000
-
     for gid, df in individual_dfs:
         for per in periods:
             if per not in df.columns:
@@ -176,19 +176,10 @@ def build_aggregate_df(individual_dfs, periods):
 
 def main():
     st.title('JSON → Excel Exposure Report')
-    st.markdown('Upload JSONs or select a local folder; tick aggregate to export combined xlsx.')
+    st.markdown('Upload JSON files or a ZIP archive of a folder, then generate.')
 
-    uploaded = st.file_uploader('JSON files', type='json', accept_multiple_files=True)
-    if 'folder_path' not in st.session_state:
-        st.session_state.folder_path = ''
-    if st.button('Select Folder'):
-        import tkinter as tk
-        from tkinter import filedialog
-        tk_root = tk.Tk(); tk_root.withdraw()
-        path = filedialog.askdirectory()
-        st.session_state.folder_path = path
-        tk_root.destroy()
-    folder = st.text_input('Folder path', value=st.session_state.folder_path)
+    uploaded_jsons = st.file_uploader('Upload JSON files', type='json', accept_multiple_files=True)
+    uploaded_zip = st.file_uploader('Or upload a ZIP of JSONs', type='zip')
     aggregate = st.checkbox('Create aggregated xlsx')
 
     if st.button('Generate'):
@@ -202,31 +193,38 @@ def main():
             gid = data['GameInfo']['GameId'].replace(' ', '_')
             individual_dfs.append((gid, df))
             game_ids.append(gid)
-        if uploaded:
-            for f in uploaded:
+
+        # load JSON uploads
+        if uploaded_jsons:
+            for f in uploaded_jsons:
                 try:
                     d = json.load(f)
                 except:
-                    st.error(f"Bad JSON {f.name}"); continue
+                    st.error(f"Bad JSON {f.name}")
+                    continue
                 load_data(d)
-        if folder:
-            for root,_,files in os.walk(folder):
-                for fn in files:
-                    if fn.lower().endswith('.json'):
-                        path = os.path.join(root, fn)
-                        try:
-                            d = json.load(open(path))
-                        except:
-                            st.error(f"Bad JSON {fn}"); continue
-                        load_data(d)
+        # load ZIP uploads
+        if uploaded_zip:
+            z = zipfile.ZipFile(io.BytesIO(uploaded_zip.read()))
+            for name in z.namelist():
+                if name.endswith('.json'):
+                    try:
+                        d = json.loads(z.read(name))
+                    except:
+                        st.error(f"Bad JSON in ZIP: {name}")
+                        continue
+                    load_data(d)
+
         periods = sorted(periods, key=sort_period_key)
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             if aggregate:
                 agg_df = build_aggregate_df(individual_dfs, periods)
+                writer.book.create_sheet('Aggregate', 0)
                 agg_df.to_excel(writer, sheet_name='Aggregate', index=False)
             for gid, df in individual_dfs:
                 df.to_excel(writer, sheet_name=gid[:31], index=False)
+
         output.seek(0)
         fn = f"{'_'.join(game_ids)}{('_Aggregate.xlsx' if aggregate else '.xlsx')}"
         st.download_button('Download Excel', data=output, file_name=fn, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
