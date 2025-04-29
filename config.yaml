@@ -4,3 +4,7 @@ Periods:
 Placements:
   "Batter's Eye": ["BE", "Batter"]
   "Mound": ["M", "PM","Pitcher"]
+  "Center Left Bottom [P2]": ["CLB"]
+  "Center Right Top [P2]": ["CRT"]
+  "Left Top [P1]": ["LT"]
+  "Right Bottom [P1]": ["RB"]
