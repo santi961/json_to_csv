@@ -28,7 +28,7 @@ def ms_to_hhmmss(total_ms):
         return ''
     h, rem = divmod(total_s, 3600)
     m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{h:02d}:{m:02d}:{s:02d}"  # HH:MM:SS
 
 
 def normalize_with_map(value, mapping):
@@ -40,9 +40,10 @@ def normalize_with_map(value, mapping):
 
 
 def normalize_period(p):
-    np = normalize_with_map(p, period_map)
-    if np != p:
-        return np
+    # config-based map
+    np_ = normalize_with_map(p, period_map)
+    if np_ != p:
+        return np_
     p0 = p.replace(' ', '').lower()
     m = re.match(r"^(\d+)(t|top)$", p0)
     if m:
@@ -70,10 +71,8 @@ def sort_period_key(p):
 # ---------- Data Processing ----------
 
 def process_data(data):
-    logos = {}
-    for l in data.get('Logos', []):
-        placement = normalize_placement(l.get('Placement', ''))
-        logos[(l['FileName'], l['GroupId'])] = placement
+    logos = {(l['FileName'], l['GroupId']): normalize_placement(l.get('Placement', ''))
+             for l in data.get('Logos', [])}
     stats, periods = {}, set()
     for shot in data.get('Shots', []):
         key = (shot['FileName'], shot['GroupId'])
@@ -176,16 +175,20 @@ def build_aggregate_df(individual_dfs, periods):
 
 def main():
     st.title('JSON → Excel Exposure Report')
-    st.markdown('Upload JSON files or a ZIP archive of a folder, then generate.')
+    st.markdown('Upload multiple JSONs or a ZIP of JSONs in one box, then generate.')
 
-    uploaded_jsons = st.file_uploader('Upload JSON files', type='json', accept_multiple_files=True)
-    uploaded_zip = st.file_uploader('Or upload a ZIP of JSONs', type='zip')
+    uploads = st.file_uploader(
+        'Upload .json files or a .zip of JSONs',
+        type=['json', 'zip'],
+        accept_multiple_files=True
+    )
     aggregate = st.checkbox('Create aggregated xlsx')
 
     if st.button('Generate'):
         individual_dfs = []
         periods = set()
         game_ids = []
+
         def load_data(data):
             sponsor_stats, ps = process_data(data)
             periods.update(ps)
@@ -194,27 +197,27 @@ def main():
             individual_dfs.append((gid, df))
             game_ids.append(gid)
 
-        # load JSON uploads
-        if uploaded_jsons:
-            for f in uploaded_jsons:
-                try:
-                    d = json.load(f)
-                except:
-                    st.error(f"Bad JSON {f.name}")
-                    continue
-                load_data(d)
-        # load ZIP uploads
-        if uploaded_zip:
-            z = zipfile.ZipFile(io.BytesIO(uploaded_zip.read()))
-            for name in z.namelist():
+        if uploads:
+            for f in uploads:
+                name = f.name.lower()
                 if name.endswith('.json'):
                     try:
-                        d = json.loads(z.read(name))
+                        d = json.load(f)
                     except:
-                        st.error(f"Bad JSON in ZIP: {name}")
+                        st.error(f"Bad JSON {f.name}")
                         continue
                     load_data(d)
-
+                elif name.endswith('.zip'):
+                    z = zipfile.ZipFile(io.BytesIO(f.read()))
+                    for member in z.namelist():
+                        if member.lower().endswith('.json'):
+                            try:
+                                d = json.loads(z.read(member))
+                            except:
+                                st.error(f"Bad JSON in ZIP: {member}")
+                                continue
+                            load_data(d)
+        
         periods = sorted(periods, key=sort_period_key)
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -224,10 +227,11 @@ def main():
                 agg_df.to_excel(writer, sheet_name='Aggregate', index=False)
             for gid, df in individual_dfs:
                 df.to_excel(writer, sheet_name=gid[:31], index=False)
-
+        
         output.seek(0)
         fn = f"{'_'.join(game_ids)}{('_Aggregate.xlsx' if aggregate else '.xlsx')}"
-        st.download_button('Download Excel', data=output, file_name=fn, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        st.download_button('Download Excel', data=output, file_name=fn,
+                           mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 if __name__=='__main__':
     main()
