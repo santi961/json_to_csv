@@ -166,7 +166,7 @@ def build_aggregate_df(individual_dfs, periods):
                 avg_p = sum(lst) / len(lst)
                 row[f"Avg {per}"] = ms_to_hhmmss(avg_p)
             else:
-                row[f"Avg {per}"] = ''
+                row[f"Avg {per}"] = '00:00:00'
         rows.append(row)
     cols = ['Placement', 'Avg Shots', 'Avg Total Duration', 'Avg Screen %'] + [f"Avg {p}" for p in periods]
     return pd.DataFrame(rows, columns=cols)
